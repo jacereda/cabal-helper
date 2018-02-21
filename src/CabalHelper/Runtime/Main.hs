@@ -191,6 +191,19 @@ import Distribution.Version
   )
 import qualified Distribution.InstalledPackageInfo as Installed
 #endif
+#if CH_MIN_VERSION_Cabal(2,2,0)
+import Distribution.PackageDescription.Parsec
+  ( readGenericPackageDescription
+  )
+import Distribution.Types.GenericPackageDescription
+  (unFlagAssignment
+  )
+import Cabal.Plan
+#else
+import Distribution.PackageDescription.Parse
+  (readPackageDescription
+  )
+#endif
 
 #if CH_MIN_VERSION_Cabal(2,2,0)
 import Distribution.Types.GenericPackageDescription
@@ -266,6 +279,7 @@ commands = [ "print-lbi"
 
 main :: IO ()
 main = do
+  logm $ "\n\n---------------Starting---------------------\n\n"
   args <- getArgs
 
   projdir:distdir:args' <- case args of
@@ -281,9 +295,16 @@ main = do
 
   v <- maybe silent (const deafening) . lookup  "CABAL_HELPER_DEBUG" <$> getEnvironment
   lbi <- unsafeInterleaveIO $ getPersistBuildConfig distdir
+  logm $ "\n\ngot lbi:" ++ show lbi
+#if CH_MIN_VERSION_Cabal(2,2,0)
+  gpd <- unsafeInterleaveIO $ readGenericPackageDescription v (projdir </> cfile)
+#else
   gpd <- unsafeInterleaveIO $ readPackageDescription v (projdir </> cfile)
+#endif
   let pd = localPkgDescr lbi
   let lvd = (lbi, v, distdir)
+
+  logm $ "\n\ngot gpd:" ++ show gpd
 
   let
       -- a =<< b $$ c   ==  (a =<< b) $$ c
@@ -317,23 +338,19 @@ main = do
 
     "config-flags":[] -> do
       return $ Just $ ChResponseFlags $ sort $
-        map (first unFlagName)
 #if CH_MIN_VERSION_Cabal(2,2,0)
-          $ unFlagAssignment $ configConfigurationsFlags
+        map (first unFlagName) $ unFlagAssignment $ configConfigurationsFlags $ configFlags lbi
 #else
-          $ configConfigurationsFlags
+        map (first unFlagName) $ configConfigurationsFlags $ configFlags lbi
 #endif
-          $ configFlags lbi
 
     "non-default-config-flags":[] -> do
       let flagDefinitons = genPackageFlags gpd
-          flagAssgnments =
 #if CH_MIN_VERSION_Cabal(2,2,0)
-            unFlagAssignment $ configConfigurationsFlags
+          flagAssgnments = unFlagAssignment $ configConfigurationsFlags $ configFlags lbi
 #else
-            configConfigurationsFlags
+          flagAssgnments = configConfigurationsFlags $ configFlags lbi
 #endif
-              $ configFlags lbi
           nonDefaultFlags =
               [ (flag_name, val)
               | MkFlag {flagName=(unFlagName -> flag_name'), flagDefault=def_val} <- flagDefinitons
@@ -839,3 +856,6 @@ renderGhcOptions' lbi _v opts = do
 -- CPP >= 1.24
   return $ renderGhcOptions (compiler lbi) (hostPlatform lbi) opts
 #endif
+
+logm :: String -> IO ()
+logm str = appendFile "/tmp/ch.log" (str ++ "\n")
